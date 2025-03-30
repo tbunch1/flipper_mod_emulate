@@ -14,7 +14,6 @@
 #include <dialogs/dialogs.h>
 #include <storage/storage.h>
 #include <flipper_format/flipper_format.h>
-#include <gui/modules/byte_input.h>
 
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
@@ -46,7 +45,8 @@ typedef struct {
     FuriString* status_text;
     uint8_t current_offset;  // Current offset value
     uint8_t menu_selection;  // Current menu selection
-    ByteInput* byte_input;   // Byte input module
+    uint8_t input_position; // Position in data input
+    char input_buffer[17];  // Buffer for hex input (8 bytes = 16 chars + null)
 } RfidApp;
 
 static void app_draw_callback(Canvas* canvas, void* ctx) {
@@ -86,8 +86,19 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 2, 60, app->menu_selection == 2 ? "> Write Tag" : "  Write Tag");
             break;
         case RfidAppStateInputOffset:
+            canvas_draw_str(canvas, 2, 24, "Enter Offset (0-255):");
+            char offset_str[8];
+            snprintf(offset_str, sizeof(offset_str), "%d", app->current_offset);
+            canvas_draw_str(canvas, 2, 36, offset_str);
+            break;
         case RfidAppStateInputData:
-            // ByteInput module handles its own drawing
+            canvas_draw_str(canvas, 2, 24, "Enter Data (16 hex):");
+            canvas_draw_str(canvas, 2, 36, app->input_buffer);
+            if(app->input_position < 16) {
+                canvas_draw_str(canvas, 2 + (app->input_position * 6), 36, "_");
+            }
+            canvas_draw_str(canvas, 2, 48, "Up:0 Down:1 Left:2 Right:3");
+            canvas_draw_str(canvas, 2, 60, "OK:Confirm Back:Delete");
             break;
     }
 }
@@ -193,19 +204,6 @@ static void rfid_write_tag(RfidApp* app) {
 //     app->state = RfidAppStateIdle;
 // }
 
-static void byte_input_callback(void* context) {
-    RfidApp* app = context;
-    if(app->state == RfidAppStateInputOffset) {
-        uint8_t* bytes = byte_input_get_bytes(app->byte_input);
-        app->current_offset = bytes[0];
-        app->state = RfidAppStateMenu;
-    } else if(app->state == RfidAppStateInputData) {
-        uint8_t* bytes = byte_input_get_bytes(app->byte_input);
-        memcpy(app->tag_data, bytes, 8);
-        app->state = RfidAppStateMenu;
-    }
-}
-
 static void handle_menu_input(RfidApp* app, InputEvent* event) {
     if(event->type == InputTypeShort) {
         switch(event->key) {
@@ -219,15 +217,12 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
                 switch(app->menu_selection) {
                     case 0:
                         app->state = RfidAppStateInputOffset;
-                        byte_input_set_header_text(app->byte_input, "Enter Offset (0-255):");
-                        byte_input_set_bytes_count(app->byte_input, 1);
-                        byte_input_set_result_callback(app->byte_input, byte_input_callback, NULL, app, NULL, 0);
+                        app->input_position = 0;
                         break;
                     case 1:
                         app->state = RfidAppStateInputData;
-                        byte_input_set_header_text(app->byte_input, "Enter Data (8 bytes):");
-                        byte_input_set_bytes_count(app->byte_input, 8);
-                        byte_input_set_result_callback(app->byte_input, byte_input_callback, NULL, app, NULL, 0);
+                        app->input_position = 0;
+                        memset(app->input_buffer, 0, sizeof(app->input_buffer));
                         break;
                     case 2:
                         app->state = RfidAppStateIdle;
@@ -246,6 +241,100 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
     }
 }
 
+static void handle_offset_input(RfidApp* app, InputEvent* event) {
+    if(event->type == InputTypeShort) {
+        switch(event->key) {
+            case InputKeyUp:
+                if(app->current_offset < 255) {
+                    app->current_offset++;
+                } else {
+                    app->current_offset = 0;  // Wrap around to 0
+                }
+                break;
+            case InputKeyDown:
+                if(app->current_offset > 0) {
+                    app->current_offset--;
+                } else {
+                    app->current_offset = 255;  // Wrap around to 255
+                }
+                break;
+            case InputKeyOk:
+                app->state = RfidAppStateMenu;
+                break;
+            case InputKeyBack:
+                app->state = RfidAppStateMenu;
+                break;
+            case InputKeyLeft:
+            case InputKeyRight:
+            case InputKeyMAX:
+                break;
+        }
+    }
+}
+
+static void handle_data_input(RfidApp* app, InputEvent* event) {
+    if(event->type == InputTypeShort) {
+        switch(event->key) {
+            case InputKeyOk:
+                if(app->input_position < 16) {
+                    app->input_buffer[app->input_position] = '0';
+                    app->input_position++;
+                } else {
+                    // Validate hex string
+                    bool valid = true;
+                    for(size_t i = 0; i < 16; i++) {
+                        if(!isxdigit((unsigned char)app->input_buffer[i])) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if(valid) {
+                        // Convert hex string to bytes
+                        for(int i = 0; i < 8; i++) {
+                            char hex[3] = {app->input_buffer[i*2], app->input_buffer[i*2+1], 0};
+                            app->tag_data[i] = strtol(hex, NULL, 16);
+                        }
+                        app->state = RfidAppStateMenu;
+                    } else {
+                        error_beep();
+                    }
+                }
+                break;
+            case InputKeyBack:
+                if(app->input_position > 0) {
+                    app->input_position--;
+                    app->input_buffer[app->input_position] = 0;
+                } else {
+                    app->state = RfidAppStateMenu;
+                }
+                break;
+            case InputKeyUp:
+            case InputKeyDown:
+            case InputKeyLeft:
+            case InputKeyRight:
+                if(app->input_position < 16) {
+                    char c = 0;
+                    switch(event->key) {
+                        case InputKeyUp: c = '0'; break;
+                        case InputKeyBack: c = '0'; break;
+                        case InputKeyDown: c = '1'; break;
+                        case InputKeyLeft: c = '2'; break;
+                        case InputKeyRight: c = '3'; break;
+                        case InputKeyOk: c = '4'; break;
+                        case InputKeyMAX: c = '6'; break;
+                    }
+                    if(c) {
+                        app->input_buffer[app->input_position] = c;
+                        app->input_position++;
+                    }
+                }
+                break;
+            case InputKeyMAX:
+                break;
+        }
+    }
+}
+
 int32_t rfid_app_main(void* p) {
     UNUSED(p);
     
@@ -253,16 +342,11 @@ int32_t rfid_app_main(void* p) {
     app->state = RfidAppStateIdle;
     app->tag_found = false;
     app->status_text = furi_string_alloc();
-    app->current_offset = 1;  // Default offset
-    app->menu_selection = 0;
     
     // Initialize protocols and worker
     app->protocols = protocol_dict_alloc(lfrfid_protocols, LFRFIDProtocolMax);
     app->worker = lfrfid_worker_alloc(app->protocols);
     lfrfid_worker_start_thread(app->worker);
-    
-    // Initialize byte input
-    app->byte_input = byte_input_alloc();
     
     // Configure view port
     app->view_port = view_port_alloc();
@@ -301,8 +385,10 @@ int32_t rfid_app_main(void* p) {
                         handle_menu_input(app, &event);
                         break;
                     case RfidAppStateInputOffset:
+                        handle_offset_input(app, &event);
+                        break;
                     case RfidAppStateInputData:
-                        byte_input_set_result_callback(app->byte_input, byte_input_callback, NULL, app, NULL, 0);
+                        handle_data_input(app, &event);
                         break;
                     case RfidAppStateEmulating:
                         if(event.key == InputKeyBack) {
@@ -326,7 +412,6 @@ int32_t rfid_app_main(void* p) {
     view_port_enabled_set(app->view_port, false);
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
-    byte_input_free(app->byte_input);
     furi_record_close(RECORD_GUI);
     furi_message_queue_free(app->event_queue);
     furi_string_free(app->status_text);
