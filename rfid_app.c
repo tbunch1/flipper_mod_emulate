@@ -5,9 +5,11 @@
 #include <lib/lfrfid/lfrfid_dict_file.h>
 #include <lib/lfrfid/lfrfid_worker.h>
 
+#include "lib/worker/helpers/hardware_worker.h"
+
 
 // #include <lfrfid/protocols/lfrfid_protocols.h>  <- this works but not the one below
-// #include <lib/lfrfid/protocols/protocol_hid_generic.h>
+// #include <lfrfid/protocols/protocol_hid_generic.h> or #include <lib/lfrfid/protocols/protocol_hid_generic.h>
 
 #include <gui/gui.h>
 #include <input/input.h>
@@ -59,8 +61,12 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     }
     
     canvas_clear(canvas);
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 12, "RFID Tool");
+    
+    // Don't show the title when in menu state (save vspace)
+    if(app->state != RfidAppStateMenu) {
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 2, 12, "RFID Tool");
+    }
     
     canvas_set_font(canvas, FontSecondary);
     switch(app->state) {
@@ -68,7 +74,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 2, 24, "OK: Read, Up: Menu");
             canvas_draw_str(canvas, 2, 36, "Back: Exit");
             if(app->tag_found) {
-                canvas_draw_str(canvas, 2, 48, "Tag found!");
+                canvas_draw_str(canvas, 2, 48, "Tag found! Down: Emulate");
             }
             break;
         case RfidAppStateReading:
@@ -87,10 +93,13 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 2, 36, "Place tag near");
             break;
         case RfidAppStateMenu:
-            canvas_draw_str(canvas, 2, 24, "Menu:");
-            canvas_draw_str(canvas, 2, 36, app->menu_selection == 0 ? "> Set Offset" : "  Set Offset");
-            canvas_draw_str(canvas, 2, 48, app->menu_selection == 1 ? "> Input Data" : "  Input Data");
-            canvas_draw_str(canvas, 2, 60, app->menu_selection == 2 ? "> Write Tag" : "  Write Tag");
+            canvas_set_font(canvas, FontPrimary);
+            canvas_draw_str(canvas, 2, 12, "Main Menu");
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 24, app->menu_selection == 0 ? "> Set Offset" : "  Set Offset");
+            canvas_draw_str(canvas, 2, 34, app->menu_selection == 1 ? "> Input Data" : "  Input Data");
+            canvas_draw_str(canvas, 2, 44, app->menu_selection == 2 ? "> Write Tag" : "  Write Tag");
+            canvas_draw_str(canvas, 2, 54, app->menu_selection == 3 ? "> Emulate Tag" : "  Emulate Tag");
             break;
         case RfidAppStateInputOffset:
             canvas_draw_str(canvas, 2, 24, "Enter Offset (0-255):");
@@ -191,21 +200,20 @@ static void rfid_write_tag(RfidApp* app) {
     lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
 }
 
-// static void rfid_emulate_tag(RfidApp* app) {
-//     app->state = RfidAppStateEmulating;
+static void rfid_emulate_tag(RfidApp* app) {
+    if(!app->tag_found) {
+        error_beep();
+        return;
+    }
+
+    app->state = RfidAppStateEmulating;
     
-//     // Initialize RFID hardware
-//     furi_hal_rfid_init();
+    // Make sure the data is in the protocol dictionary
+    protocol_dict_set_data(app->protocols, LFRFIDProtocolHidGeneric, app->tag_data, 8);
     
-//     // Configure for emulation
-//     furi_hal_rfid_tim_read_start(125000, 0.5);
-    
-//     // Emulate the tag
-//     // Note: This is a simplified version. In a real application,
-//     // you would need to implement the specific protocol emulation logic
-    
-//     app->state = RfidAppStateIdle;
-// }
+    // Start emulation - no callback needed
+    lfrfid_worker_emulate_start(app->worker, LFRFIDProtocolHidGeneric);
+}
 
 static void handle_menu_input(RfidApp* app, InputEvent* event) {
     if(event->type == InputTypeShort) {
@@ -214,7 +222,7 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
                 if(app->menu_selection > 0) app->menu_selection--;
                 break;
             case InputKeyDown:
-                if(app->menu_selection < 2) app->menu_selection++;
+                if(app->menu_selection < 3) app->menu_selection++;
                 break;
             case InputKeyOk:
                 switch(app->menu_selection) {
@@ -235,6 +243,14 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
                     case 2:
                         app->state = RfidAppStateWriting;
                         rfid_write_tag(app);
+                        break;
+                    case 3:
+                        if(app->tag_found) {
+                            app->state = RfidAppStateEmulating;
+                            rfid_emulate_tag(app);
+                        } else {
+                            error_beep(); // Notify user no tag data available
+                        }
                         break;
                 }
                 break;
@@ -427,6 +443,12 @@ int32_t rfid_app_main(void* p) {
                             case InputKeyUp:
                                 app->state = RfidAppStateMenu;
                                 break;
+                            case InputKeyDown:
+                                if(app->tag_found) {
+                                    app->state = RfidAppStateEmulating;
+                                    rfid_emulate_tag(app);
+                                }
+                                break;
                             case InputKeyBack:
                                 running = false;
                                 break;
@@ -456,6 +478,7 @@ int32_t rfid_app_main(void* p) {
                         if(event.key == InputKeyBack) {
                             lfrfid_worker_stop(app->worker);
                             app->state = RfidAppStateIdle;
+                            beep(); // Notify user emulation has ended
                         }
                         break;
                     default:

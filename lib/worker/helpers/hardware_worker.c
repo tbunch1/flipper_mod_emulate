@@ -1,3 +1,4 @@
+// Copied from MultiFuzzer - could be deleted?
 #include "hardware_worker.h"
 #include "furi.h"
 
