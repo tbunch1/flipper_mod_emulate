@@ -74,7 +74,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 2, 24, "OK: Read, Up: Menu");
             canvas_draw_str(canvas, 2, 36, "Back: Exit");
             if(app->tag_found) {
-                canvas_draw_str(canvas, 2, 48, "Tag found! Down: Emulate");
+                canvas_draw_str(canvas, 2, 48, "Tag data found!");
             }
             break;
         case RfidAppStateReading:
@@ -91,6 +91,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         case RfidAppStateWriting:
             canvas_draw_str(canvas, 2, 24, "Writing...");
             canvas_draw_str(canvas, 2, 36, "Place tag near");
+            canvas_draw_str(canvas, 2, 48, "Press Back to cancel");
             break;
         case RfidAppStateMenu:
             canvas_set_font(canvas, FontPrimary);
@@ -479,6 +480,14 @@ int32_t rfid_app_main(void* p) {
                             lfrfid_worker_stop(app->worker);
                             app->state = RfidAppStateIdle;
                             beep(); // Notify user emulation has ended
+                        }
+                        break;
+                    case RfidAppStateWriting:
+                        if(event.key == InputKeyBack) {
+                            lfrfid_worker_stop(app->worker);
+                            app->state = RfidAppStateIdle;
+                            furi_string_set(app->status_text, "Writing cancelled");
+                            error_beep();
                         }
                         break;
                     default:
