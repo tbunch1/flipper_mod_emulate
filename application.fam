@@ -1,0 +1,17 @@
+App(
+    appid="rfid_app",
+    name="RFID Tool",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="rfid_app_main",
+    requires=[
+        "gui",
+        "storage",
+        "notification",
+        "lfrfid",
+    ],
+    stack_size=2 * 1024,
+    fap_category="RFID",
+    fap_icon_assets="images",
+    fap_icon="images/icon.png",
+    fap_version="1.0",
+) 
