@@ -6,10 +6,10 @@ A simple and powerful RFID tool for the Flipper Zero that allows reading, writin
 
 - Read RFID tags (125kHz)
 - Write modified data back to RFID tags
-- Emulate RFID tags
 - Data modification with configurable offset
-- Visual feedback for all operations
-- Simple and intuitive user interface
+
+- Future: Emulate RFID tags
+
 
 ## Usage
 
@@ -21,7 +21,7 @@ A simple and powerful RFID tool for the Flipper Zero that allows reading, writin
 3. When reading:
    - Place the RFID tag near the Flipper Zero
    - The device will read the tag and add an offset of 1 to each byte
-   - You'll see a success notification when the tag is read
+   - You'll see a success notification if the tag is read
 4. When writing:
    - Make sure you have previously read a tag
    - Place the target RFID tag near the Flipper Zero
@@ -32,9 +32,7 @@ A simple and powerful RFID tool for the Flipper Zero that allows reading, writin
 
 - Uses the Flipper Zero's built-in RFID hardware
 - Supports 125kHz RFID tags
-- Data modification: Adds a constant offset (default: 1) to each byte of the tag data
-- Maximum tag data size: 10 bytes
-- Built using the Flipper Zero SDK
+- Data modification: Adds a constant offset
 
 ## Building
 
@@ -60,19 +58,13 @@ A simple and powerful RFID tool for the Flipper Zero that allows reading, writin
    ```
 
 4. Install to Flipper Zero:
+Supposed to be able to:
    ```bash
    ufbt flash APPID=rfid_app
    ```
+Been manually copying with qFlipper
 
-### Manual Build (Alternative)
-
-If you prefer building manually, you'll need:
-
-- Flipper Zero SDK
-- A Flipper Zero device
-- Basic C development tools
-
-## Safety Notes
+## Safety Notes (general)
 
 - Only use this tool on RFID tags you own or have permission to modify
 - Be careful when writing to tags as it may permanently modify them
@@ -84,4 +76,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contributing
 
-Feel free to submit issues and enhancement requests! 
+Feel free to submit issues and enhancement requests!
