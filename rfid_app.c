@@ -316,12 +316,14 @@ static void handle_data_input(RfidApp* app, InputEvent* event) {
                     char c = 0;
                     switch(event->key) {
                         case InputKeyUp: c = '0'; break;
-                        case InputKeyBack: c = '0'; break;
                         case InputKeyDown: c = '1'; break;
                         case InputKeyLeft: c = '2'; break;
                         case InputKeyRight: c = '3'; break;
                         case InputKeyOk: c = '4'; break;
                         case InputKeyMAX: c = '6'; break;
+                        case InputKeyBack:
+                            app->state = RfidAppStateMenu;
+                            break;
                     }
                     if(c) {
                         app->input_buffer[app->input_position] = c;
