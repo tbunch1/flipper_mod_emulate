@@ -6,7 +6,7 @@
 #include <lib/lfrfid/lfrfid_worker.h>
 
 
-// #include <lfrfid/protocols/lfrfid_protocols.h> 
+// #include <lfrfid/protocols/lfrfid_protocols.h>  <- this works but not the one below
 // #include <lib/lfrfid/protocols/protocol_hid_generic.h>
 
 #include <gui/gui.h>
@@ -14,6 +14,7 @@
 #include <dialogs/dialogs.h>
 #include <storage/storage.h>
 #include <flipper_format/flipper_format.h>
+#include <gui/modules/byte_input.h>
 
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
@@ -28,6 +29,9 @@ typedef enum {
     RfidAppStateReading,
     RfidAppStateEmulating,
     RfidAppStateWriting,
+    RfidAppStateMenu,
+    RfidAppStateInputOffset,
+    RfidAppStateInputData,
 } RfidAppState;
 
 typedef struct {
@@ -40,6 +44,9 @@ typedef struct {
     LFRFIDWorker* worker;
     ProtocolDict* protocols;
     FuriString* status_text;
+    uint8_t current_offset;  // Current offset value
+    uint8_t menu_selection;  // Current menu selection
+    ByteInput* byte_input;   // Byte input module
 } RfidApp;
 
 static void app_draw_callback(Canvas* canvas, void* ctx) {
@@ -51,8 +58,11 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     canvas_set_font(canvas, FontSecondary);
     switch(app->state) {
         case RfidAppStateIdle:
-            canvas_draw_str(canvas, 2, 24, "OK: Read, Up: Write");
+            canvas_draw_str(canvas, 2, 24, "OK: Read, Up: Menu");
             canvas_draw_str(canvas, 2, 36, "Back: Exit");
+            if(app->tag_found) {
+                canvas_draw_str(canvas, 2, 48, "Tag found!");
+            }
             break;
         case RfidAppStateReading:
             canvas_draw_str(canvas, 2, 24, "Reading...");
@@ -69,10 +79,16 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 2, 24, "Writing...");
             canvas_draw_str(canvas, 2, 36, "Place tag near");
             break;
-    }
-
-    if(app->tag_found) {
-        canvas_draw_str(canvas, 2, 60, "Tag found!");
+        case RfidAppStateMenu:
+            canvas_draw_str(canvas, 2, 24, "Menu:");
+            canvas_draw_str(canvas, 2, 36, app->menu_selection == 0 ? "> Set Offset" : "  Set Offset");
+            canvas_draw_str(canvas, 2, 48, app->menu_selection == 1 ? "> Input Data" : "  Input Data");
+            canvas_draw_str(canvas, 2, 60, app->menu_selection == 2 ? "> Write Tag" : "  Write Tag");
+            break;
+        case RfidAppStateInputOffset:
+        case RfidAppStateInputData:
+            // ByteInput module handles its own drawing
+            break;
     }
 }
 
@@ -147,7 +163,7 @@ static void rfid_write_tag(RfidApp* app) {
     memcpy(modified_data, app->tag_data, 8);
     
     // Apply offset with overflow propagation through all bytes
-    uint16_t carry = DATA_OFFSET;
+    uint16_t carry = app->current_offset;
     for(int i = 0; i < 8; i++) {
         uint16_t new_value = modified_data[i] + carry;
         modified_data[i] = new_value & 0xFF;  // Keep only the lower 8 bits
@@ -177,6 +193,59 @@ static void rfid_write_tag(RfidApp* app) {
 //     app->state = RfidAppStateIdle;
 // }
 
+static void byte_input_callback(void* context) {
+    RfidApp* app = context;
+    if(app->state == RfidAppStateInputOffset) {
+        uint8_t* bytes = byte_input_get_bytes(app->byte_input);
+        app->current_offset = bytes[0];
+        app->state = RfidAppStateMenu;
+    } else if(app->state == RfidAppStateInputData) {
+        uint8_t* bytes = byte_input_get_bytes(app->byte_input);
+        memcpy(app->tag_data, bytes, 8);
+        app->state = RfidAppStateMenu;
+    }
+}
+
+static void handle_menu_input(RfidApp* app, InputEvent* event) {
+    if(event->type == InputTypeShort) {
+        switch(event->key) {
+            case InputKeyUp:
+                if(app->menu_selection > 0) app->menu_selection--;
+                break;
+            case InputKeyDown:
+                if(app->menu_selection < 2) app->menu_selection++;
+                break;
+            case InputKeyOk:
+                switch(app->menu_selection) {
+                    case 0:
+                        app->state = RfidAppStateInputOffset;
+                        byte_input_set_header_text(app->byte_input, "Enter Offset (0-255):");
+                        byte_input_set_bytes_count(app->byte_input, 1);
+                        byte_input_set_result_callback(app->byte_input, byte_input_callback, NULL, app, NULL, 0);
+                        break;
+                    case 1:
+                        app->state = RfidAppStateInputData;
+                        byte_input_set_header_text(app->byte_input, "Enter Data (8 bytes):");
+                        byte_input_set_bytes_count(app->byte_input, 8);
+                        byte_input_set_result_callback(app->byte_input, byte_input_callback, NULL, app, NULL, 0);
+                        break;
+                    case 2:
+                        app->state = RfidAppStateIdle;
+                        rfid_write_tag(app);
+                        break;
+                }
+                break;
+            case InputKeyBack:
+                app->state = RfidAppStateIdle;
+                break;
+            case InputKeyLeft:
+            case InputKeyRight:
+            case InputKeyMAX:
+                break;
+        }
+    }
+}
+
 int32_t rfid_app_main(void* p) {
     UNUSED(p);
     
@@ -184,11 +253,16 @@ int32_t rfid_app_main(void* p) {
     app->state = RfidAppStateIdle;
     app->tag_found = false;
     app->status_text = furi_string_alloc();
+    app->current_offset = 1;  // Default offset
+    app->menu_selection = 0;
     
     // Initialize protocols and worker
     app->protocols = protocol_dict_alloc(lfrfid_protocols, LFRFIDProtocolMax);
     app->worker = lfrfid_worker_alloc(app->protocols);
     lfrfid_worker_start_thread(app->worker);
+    
+    // Initialize byte input
+    app->byte_input = byte_input_alloc();
     
     // Configure view port
     app->view_port = view_port_alloc();
@@ -207,23 +281,33 @@ int32_t rfid_app_main(void* p) {
     while(running) {
         if(furi_message_queue_get(app->event_queue, &event, 100) == FuriStatusOk) {
             if(event.type == InputTypeShort) {
-                switch(event.key) {
-                    case InputKeyOk:
-                        if(app->state == RfidAppStateIdle) {
-                            rfid_read_tag(app);
+                switch(app->state) {
+                    case RfidAppStateIdle:
+                        switch(event.key) {
+                            case InputKeyOk:
+                                rfid_read_tag(app);
+                                break;
+                            case InputKeyUp:
+                                app->state = RfidAppStateMenu;
+                                break;
+                            case InputKeyBack:
+                                running = false;
+                                break;
+                            default:
+                                break;
                         }
                         break;
-                    case InputKeyUp:
-                        if(app->state == RfidAppStateIdle) {
-                            rfid_write_tag(app);
-                        }
+                    case RfidAppStateMenu:
+                        handle_menu_input(app, &event);
                         break;
-                    case InputKeyBack:
-                        if(app->state == RfidAppStateEmulating) {
+                    case RfidAppStateInputOffset:
+                    case RfidAppStateInputData:
+                        byte_input_set_result_callback(app->byte_input, byte_input_callback, NULL, app, NULL, 0);
+                        break;
+                    case RfidAppStateEmulating:
+                        if(event.key == InputKeyBack) {
                             lfrfid_worker_stop(app->worker);
                             app->state = RfidAppStateIdle;
-                        } else {
-                            running = false;
                         }
                         break;
                     default:
@@ -231,6 +315,7 @@ int32_t rfid_app_main(void* p) {
                 }
             }
         }
+        view_port_update(app->view_port);
     }
     
     // Cleanup
@@ -241,6 +326,7 @@ int32_t rfid_app_main(void* p) {
     view_port_enabled_set(app->view_port, false);
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
+    byte_input_free(app->byte_input);
     furi_record_close(RECORD_GUI);
     furi_message_queue_free(app->event_queue);
     furi_string_free(app->status_text);
