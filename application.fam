@@ -9,6 +9,17 @@ App(
         "notification",
         "lfrfid",
     ],
+    fap_private_libs=[
+        Lib(
+            name="sphlib",
+            fap_include_paths=[],
+            sources=[
+                "sph_ripemd.h",
+                "sph_types.h",
+                "ripemd.c",
+            ],
+        ),
+    ],
     stack_size=2 * 1024,
     fap_category="RFID",
     fap_icon_assets="images",
