@@ -33,6 +33,9 @@ typedef enum {
     RfidAppStateMenu,
     RfidAppStateInputOffset,
     RfidAppStateInputData,
+    RfidAppStateCreateHT,
+    RfidAppStateCreateError,
+    RfidAppStateCreateSuccess,
 } RfidAppState;
 
 typedef struct {
@@ -41,13 +44,16 @@ typedef struct {
     FuriMessageQueue* event_queue;
     RfidAppState state;
     uint8_t tag_data[8]; // HID data is 8 bytes
-    bool tag_found;
+    bool tag_found; // tag has been scanned
     LFRFIDWorker* worker;
     ProtocolDict* protocols;
     FuriString* status_text;
     uint8_t current_offset;
     uint8_t menu_selection;
     uint8_t input_bytes[8];
+    uint32_t hash_bytes[100]; // big array of all the hash values for the tag
+    uint8_t card_id;
+    uint8_t card_idx;
     ViewPort*
         byte_input_view_port; // ViewPort for data input -> TODO: Wanted ByteInput but not working
 } RfidApp;
@@ -102,6 +108,8 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         canvas_draw_str(canvas, 2, 44, app->menu_selection == 2 ? "> Write Tag" : "  Write Tag");
         canvas_draw_str(
             canvas, 2, 54, app->menu_selection == 3 ? "> Emulate Tag" : "  Emulate Tag");
+        canvas_draw_str(canvas, 2, 54, app->menu_selection == 4 ? "> Create HashTag": "  Create HashTag");
+        //TODO not rendering right, need to allow scrolling 
         break;
     case RfidAppStateInputOffset:
         canvas_draw_str(canvas, 2, 24, "Enter Offset (0-255):");
@@ -111,6 +119,24 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateInputData:
         // This case should not be reached now since we return early
+        break;
+    case RfidAppStateCreateHT:
+        if(app->status_text) {
+            canvas_draw_str(canvas, 2, 24, "Hash values generated");
+            canvas_draw_str(canvas, 2, 34, furi_string_get_cstr(app->status_text));
+        } else {
+            canvas_draw_str(canvas, 2, 24, "Generating Hash Values");
+
+        }
+        break;
+    case RfidAppStateCreateError:
+        canvas_draw_str(canvas, 2, 24, "Card Write Error");
+        canvas_draw_str(canvas, 2, 34, "Press OK to try again");
+        break;
+    case RfidAppStateCreateSuccess:
+        canvas_draw_str(canvas, 2, 24, "Card Write Success!");
+        canvas_draw_str(canvas, 2, 34, "Press back to go to menu");
+
         break;
     }
 }
@@ -164,6 +190,17 @@ static void rfid_write_callback(LFRFIDWorkerWriteResult result, void* context) {
     }
 }
 
+static void rfid_create_tag_callback(LFRFIDWorkerWriteResult result, void* context) {
+    RfidApp* app = context;
+    if(result == LFRFIDWorkerWriteOK) {
+        app->state = RfidAppStateCreateSuccess;
+        beep();
+    } else {
+        app->state = RfidAppStateCreateError;
+        error_beep();
+    }
+}
+
 static void rfid_read_tag(RfidApp* app) {
     app->state = RfidAppStateReading;
     app->tag_found = false;
@@ -202,39 +239,40 @@ static void rfid_write_tag(RfidApp* app) {
     lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
 }
 
-static void rfid_write_list(RfidApp* app){
-    int size = 10;
+// NOTE: commented out to allow for compiling
+// static void rfid_write_list(RfidApp* app){
+//     int size = 10;
 
-    // replace with actual data
-    typedef uint8_t card[8];
-    card x[size];
-    memset(x[0], 0, 1);
-    memset(x[1], 1, 1);
-    memset(x[2], 2, 1);
-    memset(x[3], 3, 1);
-    memset(x[4], 4, 1);
-    memset(x[5], 5, 1);
-    memset(x[6], 6, 1);
-    memset(x[7], 7, 1);
-    memset(x[8], 8, 1);
-    memset(x[9], 9, 1);
-    // end array data
-    int i;
+//     // replace with actual data
+//     typedef uint8_t card[8];
+//     card x[size];
+//     memset(x[0], 0, 1);
+//     memset(x[1], 1, 1);
+//     memset(x[2], 2, 1);
+//     memset(x[3], 3, 1);
+//     memset(x[4], 4, 1);
+//     memset(x[5], 5, 1);
+//     memset(x[6], 6, 1);
+//     memset(x[7], 7, 1);
+//     memset(x[8], 8, 1);
+//     memset(x[9], 9, 1);
+//     // end array data
+//     int i;
 
-    for (i = 0; i < size; i++) {
-        if(x[i] == app->tag_data){
-            break;
-        }
-    }
-    // replace with next value in chain
-    memcpy(app->tag_data, x[(i + 1) % size], sizeof(app->tag_data));
+//     for (i = 0; i < size; i++) {
+//         if(x[i] == app->tag_data){
+//             break;
+//         }
+//     }
+//     // replace with next value in chain
+//     memcpy(app->tag_data, x[(i + 1) % size], sizeof(app->tag_data));
 
-    // update write values
-    protocol_dict_set_data(app->protocols, LFRFIDProtocolHidGeneric, app->tag_data, 8);
+//     // update write values
+//     protocol_dict_set_data(app->protocols, LFRFIDProtocolHidGeneric, app->tag_data, 8);
 
-    // Start writing
-    lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
-}
+//     // Start writing
+//     lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
+// }
 
 static void rfid_emulate_tag(RfidApp* app) {
     if(!app->tag_found) {
@@ -251,6 +289,36 @@ static void rfid_emulate_tag(RfidApp* app) {
     lfrfid_worker_emulate_start(app->worker, LFRFIDProtocolHidGeneric);
 }
 
+
+static void rfid_create_hash_tag(RfidApp* app) {
+    // fill hash array with keys
+    uint32_t val = 12345;
+    for (int i = 99; i >= 0; i--) {
+        char outp[16];
+        sph_ripemd128_context* ctx = malloc(sizeof(sph_ripemd128_context));
+        sph_ripemd128_init(ctx); 	
+        sph_ripemd128(ctx, &val, 4);
+        sph_ripemd128_close(ctx, outp);
+        free(ctx);
+
+        memcpy(&app->hash_bytes[i], outp, 4);
+        val = app->hash_bytes[i];
+    }
+    app->card_idx = 99;
+    app->card_id = 123;
+    uint8_t card_data[5];
+    card_data[0] = app->card_id;
+    memcpy(&card_data[1], &app->hash_bytes[app->card_idx], 4);
+    furi_string_set(app->status_text, "Place card to write");
+
+ // Set the modified data in the protocol dictionary
+    protocol_dict_set_data(app->protocols, LFRFIDProtocolEM4100, card_data, 5);
+
+    // Start writing
+    lfrfid_worker_write_start(app->worker, LFRFIDProtocolEM4100, rfid_create_tag_callback, app);
+}
+
+
 static void handle_menu_input(RfidApp* app, InputEvent* event) {
     if(event->type == InputTypeShort) {
         switch(event->key) {
@@ -258,7 +326,7 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
             if(app->menu_selection > 0) app->menu_selection--;
             break;
         case InputKeyDown:
-            if(app->menu_selection < 3) app->menu_selection++;
+            if(app->menu_selection < 4) app->menu_selection++;
             break;
         case InputKeyOk:
             switch(app->menu_selection) {
@@ -287,6 +355,10 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
                 } else {
                     error_beep(); // Notify user no tag data available
                 }
+                break;
+            case 4:
+                app->state = RfidAppStateCreateHT;
+                rfid_create_hash_tag(app);
                 break;
             }
             break;
@@ -525,6 +597,18 @@ int32_t rfid_app_main(void* p) {
                         error_beep();
                     }
                     break;
+                case RfidAppStateCreateError:
+                    if (event.key == InputKeyOk) {
+                        app->state = RfidAppStateCreateHT;
+                        rfid_create_hash_tag(app);
+                    } else if (event.key == InputKeyBack) {
+                        app->state = RfidAppStateMenu;
+                    }
+                    break;
+                case RfidAppStateCreateSuccess:
+                    if (event.key == InputKeyBack || event.key == InputKeyOk) {
+                        app->state = RfidAppStateMenu;
+                    }
                 default:
                     break;
                 }
