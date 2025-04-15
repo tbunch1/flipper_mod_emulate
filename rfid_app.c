@@ -50,6 +50,7 @@ typedef struct {
     FuriString* status_text;
     uint8_t current_offset;
     uint8_t menu_selection;
+    uint8_t screen_base;
     uint8_t input_bytes[8];
     uint32_t hash_bytes[100]; // big array of all the hash values for the tag
     uint8_t card_id;
@@ -100,15 +101,25 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         canvas_draw_str(canvas, 2, 48, "Press Back to cancel");
         break;
     case RfidAppStateMenu:
+        char* menu_strings[] = {
+            "  Set Offset",
+            "  Input Data",
+            "  Write Tag",
+            "  Emulate Tag",
+            "  Create HashTag",
+            "  Read HashTag"
+        };
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str(canvas, 2, 12, "Main Menu");
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 24, app->menu_selection == 0 ? "> Set Offset" : "  Set Offset");
-        canvas_draw_str(canvas, 2, 34, app->menu_selection == 1 ? "> Input Data" : "  Input Data");
-        canvas_draw_str(canvas, 2, 44, app->menu_selection == 2 ? "> Write Tag" : "  Write Tag");
-        canvas_draw_str(
-            canvas, 2, 54, app->menu_selection == 3 ? "> Emulate Tag" : "  Emulate Tag");
-        canvas_draw_str(canvas, 2, 54, app->menu_selection == 4 ? "> Create HashTag": "  Create HashTag");
+        canvas_draw_str(canvas, 2, 24, menu_strings[app->screen_base]);
+        canvas_draw_str(canvas, 2, 34, menu_strings[app->screen_base + 1]);
+        canvas_draw_str(canvas, 2, 44, menu_strings[app->screen_base + 2]);
+        canvas_draw_str(canvas, 2, 54, menu_strings[app->screen_base + 3]);
+
+
+        canvas_draw_str(canvas, 2, 24 + 10 * (app->menu_selection - app->screen_base), ">");
+
         //TODO not rendering right, need to allow scrolling 
         break;
     case RfidAppStateInputOffset:
@@ -323,10 +334,22 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
     if(event->type == InputTypeShort) {
         switch(event->key) {
         case InputKeyUp:
-            if(app->menu_selection > 0) app->menu_selection--;
+            if(app->menu_selection > 0) {
+                if (app->screen_base == app->menu_selection) {
+                    app->screen_base--;
+                }
+                app->menu_selection--;
+
+            }
             break;
         case InputKeyDown:
-            if(app->menu_selection < 4) app->menu_selection++;
+            if(app->menu_selection < 4) {
+                if (app->screen_base + 3 == app->menu_selection) {
+                    app->screen_base++;
+                }
+                app->menu_selection++;
+
+            }
             break;
         case InputKeyOk:
             switch(app->menu_selection) {
