@@ -67,10 +67,10 @@ typedef struct {
 // TODO there's an issue where if i put the write_hash code in the hash_read_callback function
 // furi_check fails. I think this is because it's doing a write while in a callback function?
 // anyways, i'm not sure how to do the stuff to ensure that the write function is called without
-// putting it in the callback function (i tried calling it after calling hash_read, but it was 
-// called before the read went through). i did a jank solution where when the screen gets rendered, 
-//if we're in the hash write state and the hash_correct bool is true (which it is if we're writing), 
-// it'll call hash_write then. 
+// putting it in the callback function (i tried calling it after calling hash_read, but it was
+// called before the read went through). i did a jank solution where when the screen gets rendered,
+//if we're in the hash write state and the hash_correct bool is true (which it is if we're writing),
+// it'll call hash_write then.
 // CTRL F  'jank' for places this affects
 static void beep() {
     NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
@@ -79,7 +79,7 @@ static void beep() {
 }
 // red flash
 static void error_beep() {
-    
+
     NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
     notification_message(notification, &sequence_error);
     furi_record_close(RECORD_NOTIFICATION);
@@ -206,11 +206,6 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateReadingHash:
         canvas_draw_str(canvas, 2, 24, "Hold card on reader.");
-        char hash_str[9];
-        // TODO currently prints backwards
-        snprintf(hash_str, 9, "%08X", (int) app->hash_bytes[app->card_idx]);
-        canvas_draw_str(canvas, 2, 44, "Expected hash value: ");
-        canvas_draw_str(canvas, 2, 54, hash_str);
         break;
     case RfidAppStateWriteHash:
         canvas_draw_str(canvas, 2, 24, "Keep card on reader.");
@@ -234,11 +229,6 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
 
 
         break;
-    /*TODO add displays for  
-    RfidAppStateReadingHash,
-    RfidAppStateWriteHash,
-    RfidAppStateHashReadError,
-    */
     }
 }
 
@@ -246,23 +236,8 @@ static void app_input_callback(InputEvent* input_event, void* ctx) {
     RfidApp* app = ctx;
     furi_message_queue_put(app->event_queue, input_event, FuriWaitForever);
 }
-/*
-jank: original location of beeps
-// green fladh
-static void beep() {
-    NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
-    notification_message(notification, &sequence_success);
-    furi_record_close(RECORD_NOTIFICATION);
-}
-// red flash
-static void error_beep() {
-    
-    NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
-    notification_message(notification, &sequence_error);
-    furi_record_close(RECORD_NOTIFICATION);
-}
-*/
-// format: update state before method call but clean up by changing state back at end of method
+
+// format for these methods: update state before method call but clean up by changing state back at end of method
 static void rfid_read_callback(LFRFIDWorkerReadResult result, ProtocolId protocol, void* context) {
     RfidApp* app = context;
     if(result == LFRFIDWorkerReadDone) {
@@ -345,44 +320,6 @@ static void rfid_write_tag(RfidApp* app) {
     lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
 }
 
-
-/*
-NOTE: commented out to allow for compiling
-static void rfid_write_list(RfidApp* app){
-    int size = 10;
-
-    // replace with actual data
-    typedef uint8_t card[8];
-    card x[size];
-    memset(x[0], 0, 1);
-    memset(x[1], 1, 1);
-    memset(x[2], 2, 1);
-    memset(x[3], 3, 1);
-    memset(x[4], 4, 1);
-    memset(x[5], 5, 1);
-    memset(x[6], 6, 1);
-    memset(x[7], 7, 1);
-    memset(x[8], 8, 1);
-    memset(x[9], 9, 1);
-    // end array data
-    int i;
-
-    for (i = 0; i < size; i++) {
-        if(x[i] == app->tag_data){
-            break;
-        }
-    }
-    // replace with next value in chain
-    memcpy(app->tag_data, x[(i + 1) % size], sizeof(app->tag_data));
-
-    // update write values
-    protocol_dict_set_data(app->protocols, LFRFIDProtocolHidGeneric, app->tag_data, 8);
-
-    // Start writing
-    lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
-}
-*/
-
 static void rfid_emulate_tag(RfidApp* app) {
     if(!app->tag_found) {
         error_beep();
@@ -398,14 +335,13 @@ static void rfid_emulate_tag(RfidApp* app) {
     lfrfid_worker_emulate_start(app->worker, LFRFIDProtocolHidGeneric);
 }
 
-
 static void rfid_create_hash_tag(RfidApp* app) {
-    // fill hash array with keys, with first generated key at end 
+    // fill hash array with keys, with first generated key at end
     uint32_t val = 12345;
     for (int i = 99; i >= 0; i--) {
         char outp[16];
         sph_ripemd128_context* ctx = malloc(sizeof(sph_ripemd128_context));
-        sph_ripemd128_init(ctx); 	
+        sph_ripemd128_init(ctx);
         sph_ripemd128(ctx, &val, 4);
         sph_ripemd128_close(ctx, outp);
         free(ctx);
@@ -478,7 +414,6 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
             app->state = RfidAppStateWriteHash;
             app->tag_found = true;
             // beep();
-
         } else {
             app->hash_correct = false;
             //TODO may add code to check future vals
@@ -487,8 +422,8 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
             app->tag_found = false;
             error_beep();
         }
-        
-        
+
+
     } else if(result == LFRFIDWorkerReadSenseCardStart) {
         furi_string_set(app->status_text, "Card detected, reading...");
     } else if(result == LFRFIDWorkerReadSenseCardEnd) {
@@ -498,13 +433,31 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
     }
 }
 
-static void rfid_read_hash_tag(RfidApp* app) {
+static void rfid_read_hash_tag(RfidApp* app, Canvas *canvas) {
     app->tag_found = false;
+    // callback will update value if correct but want to display values here
+
+     char hash_str[9];
+     // TODO currently prints backwards, includes card_id
+     snprintf(hash_str, 9, "%08X", (int) app->hash_bytes[app->card_idx]);
+     canvas_draw_str(canvas, 2, 44, "Expected hash value: ");
+     // TODO: check if positioning fine - trying to just write elements before
+     canvas_draw_str(canvas, 2, 54, hash_str);
+
+     char found_str[9];
+     snprintf(found_str, 9, "%08X", (int) app->tag_data[1]);
+     canvas_draw_str(canvas, 2, 64, "Found hash value: ");
+     canvas_draw_str(canvas, 2, 74, found_str);
+
+     if(app->hash_correct) {
+         canvas_draw_str(canvas, 2, 84, "Hash value matches!");
+     } else {
+         canvas_draw_str(canvas, 2, 84, "Hash value does not match.");
+        //  TODO: return or not?
+     }
+
     lfrfid_worker_read_start(app->worker, LFRFIDWorkerReadTypeAuto, rfid_read_hash_callback, app);
-    
 }
-
-
 
 
 
@@ -559,7 +512,7 @@ static void handle_menu_input(RfidApp* app, InputEvent* event) {
                 app->state = RfidAppStateCreateHT;
                 rfid_create_hash_tag(app);
                 break;
-            case 5: 
+            case 5:
                 app->state = RfidAppStateReadingHash;
                 rfid_read_hash_tag(app);
                 break;
