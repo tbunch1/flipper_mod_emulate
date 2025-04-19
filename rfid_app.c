@@ -37,6 +37,7 @@ typedef enum {
     RfidAppStateCreateError,
     RfidAppStateCreateSuccess,
     RfidAppStateReadingHash,
+    RfidAppStateReadingHashSuccess,
     RfidAppStateWriteHash,
     RfidAppStateHashError,
     RfidAppStateWriteHashSuccess,
@@ -117,6 +118,8 @@ static void rfid_write_hash(RfidApp* app) {
 }
 // end jank code block
 
+
+#define CANVAS_MAX_WIDTH 128 //TODO: Check if actual maximum or smaller?
 
 static void app_draw_callback(Canvas* canvas, void* ctx) {
     RfidApp* app = ctx;
@@ -206,6 +209,18 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateReadingHash:
         canvas_draw_str(canvas, 2, 24, "Hold card on reader.");
+        char expecting_str[40+8];
+        // app->hash_bytes is an unsigned int,
+        snprintf(expecting_str, sizeof(expecting_str), "Expecting %02lX", app->hash_bytes[app->card_idx]);
+        canvas_draw_str(canvas, 2, 36, expecting_str);
+        break;
+    case RfidAppStateReadingHashSuccess:
+        char hash_str[40+8];
+        snprintf(hash_str, sizeof(hash_str), "Found card with hash:");
+        canvas_draw_str(canvas, 2, 24, hash_str);
+        snprintf(hash_str, sizeof(hash_str), "Expected %02lX", app->hash_bytes[app->card_idx]);
+        canvas_draw_str(canvas, 2, 36, hash_str);
+        canvas_draw_str(canvas, 2, 34, "Will try writing to card if matched");
         break;
     case RfidAppStateWriteHash:
         canvas_draw_str(canvas, 2, 24, "Keep card on reader.");
@@ -403,6 +418,10 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
 
     if(result == LFRFIDWorkerReadDone) {
         // Get the protocol data
+        app->state = RfidAppStateReadingHashSuccess;
+        // wait 1 s to show data -- TODO: Switch to input key to let person abort?
+        furi_delay_ms(1000);
+
         size_t data_size = protocol_dict_get_data_size(app->protocols, protocol);
         protocol_dict_get_data(app->protocols, protocol, app->tag_data, data_size);
 
@@ -433,29 +452,8 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
     }
 }
 
-static void rfid_read_hash_tag(RfidApp* app, Canvas *canvas) {
+static void rfid_read_hash_tag(RfidApp* app) {
     app->tag_found = false;
-    // callback will update value if correct but want to display values here
-
-     char hash_str[9];
-     // TODO currently prints backwards, includes card_id
-     snprintf(hash_str, 9, "%08X", (int) app->hash_bytes[app->card_idx]);
-     canvas_draw_str(canvas, 2, 44, "Expected hash value: ");
-     // TODO: check if positioning fine - trying to just write elements before
-     canvas_draw_str(canvas, 2, 54, hash_str);
-
-     char found_str[9];
-     snprintf(found_str, 9, "%08X", (int) app->tag_data[1]);
-     canvas_draw_str(canvas, 2, 64, "Found hash value: ");
-     canvas_draw_str(canvas, 2, 74, found_str);
-
-     if(app->hash_correct) {
-         canvas_draw_str(canvas, 2, 84, "Hash value matches!");
-     } else {
-         canvas_draw_str(canvas, 2, 84, "Hash value does not match.");
-        //  TODO: return or not?
-     }
-
     lfrfid_worker_read_start(app->worker, LFRFIDWorkerReadTypeAuto, rfid_read_hash_callback, app);
 }
 
