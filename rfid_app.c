@@ -219,12 +219,12 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     case RfidAppStateReadingHashSuccess:
         canvas_draw_str(canvas, 2, 24, "Read:");
         char hash_str[40+8];
-        snprintf(hash_str, sizeof(hash_str), "%02lX", app->tag_data[1]);
+        snprintf(hash_str, sizeof(hash_str), "%02X", app->tag_data[1]);
         canvas_draw_str(canvas, 4, 34, hash_str);
         snprintf(hash_str, sizeof(hash_str), "%02lX", app->hash_bytes[app->card_idx]);
         canvas_draw_str(canvas, 2, 44, "Expected:");
         canvas_draw_str(canvas, 4, 54, hash_str);
-        
+
         if (app->tag_data[1] == app->hash_bytes[app->card_idx]) {
             canvas_draw_str(canvas, 2, 64, "Matched, will write to card");
         } else {
