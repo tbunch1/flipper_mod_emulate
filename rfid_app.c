@@ -209,18 +209,28 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateReadingHash:
         canvas_draw_str(canvas, 2, 24, "Hold card on reader.");
+
+        canvas_draw_str(canvas, 2, 34, "Expecting:");
         char expecting_str[40+8];
-        // app->hash_bytes is an unsigned int,
-        snprintf(expecting_str, sizeof(expecting_str), "Expecting %02lX", app->hash_bytes[app->card_idx]);
-        canvas_draw_str(canvas, 2, 36, expecting_str);
+        // app->hash_bytes is an unsigned int
+        snprintf(expecting_str, sizeof(expecting_str), "%02lX", app->hash_bytes[app->card_idx]);
+        canvas_draw_str(canvas, 4, 44, expecting_str);
         break;
     case RfidAppStateReadingHashSuccess:
+        canvas_draw_str(canvas, 2, 24, "Read:");
         char hash_str[40+8];
-        snprintf(hash_str, sizeof(hash_str), "Found card with hash:");
-        canvas_draw_str(canvas, 2, 24, hash_str);
-        snprintf(hash_str, sizeof(hash_str), "Expected %02lX", app->hash_bytes[app->card_idx]);
-        canvas_draw_str(canvas, 2, 36, hash_str);
-        canvas_draw_str(canvas, 2, 34, "Will try writing to card if matched");
+        snprintf(hash_str, sizeof(hash_str), "%02lX", app->tag_data[1]);
+        canvas_draw_str(canvas, 4, 34, hash_str);
+        snprintf(hash_str, sizeof(hash_str), "%02lX", app->hash_bytes[app->card_idx]);
+        canvas_draw_str(canvas, 2, 44, "Expected:");
+        canvas_draw_str(canvas, 4, 54, hash_str);
+        
+        if (app->tag_data[1] == app->hash_bytes[app->card_idx]) {
+            canvas_draw_str(canvas, 2, 64, "Matched, will write to card");
+        } else {
+            canvas_draw_str(canvas, 2, 64, "Not matched, will not write");
+        }
+
         break;
     case RfidAppStateWriteHash:
         canvas_draw_str(canvas, 2, 24, "Keep card on reader.");
@@ -419,8 +429,8 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
     if(result == LFRFIDWorkerReadDone) {
         // Get the protocol data
         app->state = RfidAppStateReadingHashSuccess;
-        // wait 1 s to show data -- TODO: Switch to input key to let person abort?
-        furi_delay_ms(1000);
+        // wait 5 s to gui of read vs expected -- TODO: Switch to input key to let person abort?
+        furi_delay_ms(5000);
 
         size_t data_size = protocol_dict_get_data_size(app->protocols, protocol);
         protocol_dict_get_data(app->protocols, protocol, app->tag_data, data_size);
