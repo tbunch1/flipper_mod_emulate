@@ -23,6 +23,7 @@
 
 #include <gui/modules/byte_input.h>
 
+// #define DEBUG
 #define TAG "RFID_APP"
 
 typedef enum {
@@ -40,7 +41,14 @@ typedef enum {
     RfidAppStateWriteHash,
     RfidAppStateHashError,
     RfidAppStateWriteHashSuccess,
+    RfidAppStateDebugMsg,
 } RfidAppState;
+
+typedef struct {
+uint8_t card_id;
+uint8_t curr_idx;
+uint32_t hash_bytes[100];
+} HashData;
 
 typedef struct {
     Gui* gui;
@@ -56,20 +64,138 @@ typedef struct {
     uint8_t menu_selection;
     uint8_t screen_base;
     uint8_t input_bytes[8];
-    uint32_t hash_bytes[100]; // big array of all the hash values for the tag
-    uint8_t card_id;
-    uint8_t card_idx;
+    HashData hash_data;
     bool hash_correct;
+    Storage* storage;
     ViewPort*
         byte_input_view_port; // ViewPort for data input -> TODO: Wanted ByteInput but not working
 } RfidApp;
+
+
+
+// writes a hash card's data to a file named based on the card's ID
+// if create is true, the card shouldn't exist - if it does, return -1
+// if not, card should exist, if it doesn't, return -2 
+// return 1 if write was successful, 0 if not
+int8_t rfid_file_write(RfidApp* app, HashData* data, bool create) {
+    FlipperFormat* file = flipper_format_file_alloc(app->storage);
+    int8_t returnval = 0;
+    FuriString* filepath = furi_string_alloc_printf("/ext/rfid_hashes/%d.hashrf", data->card_id);
+    if (create) {
+        if(!flipper_format_file_open_new(file, furi_string_get_cstr(filepath))) {
+            returnval = -1;
+            goto done;
+        }
+    } else {
+        if(!flipper_format_file_open_existing(file, furi_string_get_cstr(filepath))) {
+            returnval = -2;
+            goto done;
+        }
+    }
+    if (!flipper_format_write_header_cstr(file, "Hash Keys", 1)) {
+        goto done;
+    }
+    flipper_format_delete_key(file, "HashData");
+    if (!flipper_format_write_hex(file, "HashData", (uint8_t*) data, sizeof(HashData))) {
+        goto done;
+    }
+    returnval = 1;
+    done: 
+    flipper_format_free(file);
+    furi_string_free(filepath);
+
+    return returnval;
+}
+
+// read the card data for an existing card
+// returns -1 if card doesn't exist, 0 on error, 1 if successful
+int8_t rfid_file_read(RfidApp* app, HashData* data, uint8_t card_id) {
+    FlipperFormat* file = flipper_format_file_alloc(app->storage);
+    int8_t returnval = 0;
+    FuriString* filepath = furi_string_alloc_printf("/ext/rfid_hashes/%d.hashrf", card_id);
+
+
+    if(!flipper_format_file_open_existing(file, furi_string_get_cstr(filepath))) {
+        returnval = -1;
+        goto done;
+    }
+
+    if(flipper_format_read_hex(file, "HashData", (uint8_t *) data, sizeof(HashData))) {
+        returnval = 1;
+        goto done;
+    }
+
+
+    done:
+    furi_string_free(filepath);
+    flipper_format_free(file);
+
+    return returnval;
+}
+
+// creates the id array to map what id values are currently available
+// returns -1 on error, 0 when it already exists, 1 on success
+int8_t rfid_create_idarr(RfidApp* app) {
+    FlipperFormat* file = flipper_format_file_alloc(app->storage);
+    int8_t returnval = 0;
+    if (flipper_format_file_open_new(file, "/ext/rfid_hashes/idarr.hashrf")) {
+        uint8_t idarr[256];
+        for (int i = 0; i < 256; i++) {
+            idarr[i] = 0;
+        }
+        if (flipper_format_write_hex(file, "EM4100", idarr, 256)) {
+            returnval = 1;
+        } else {
+            returnval = -1;
+        }
+    }
+    flipper_format_free(file);
+    return returnval;
+}
+
+// returns a free id that can be used
+// returns -1 on error, and an id between 0 and 255 on success
+int16_t rfid_alloc_id(RfidApp* app) {
+    FlipperFormat* file = flipper_format_file_alloc(app->storage);
+    int8_t returnval = -1;
+    uint8_t idarr[256];
+
+    if(!flipper_format_file_open_existing(file, "/ext/rfid_hashes/idarr.hashrf")) {
+        returnval = -2;
+        goto done;
+    }
+
+    if(!flipper_format_read_hex(file, "EM4100", idarr, sizeof(idarr))) {
+        returnval = -3;
+        goto done;
+    }
+    // 0 is reserved
+    for (int i = 0; i < 256; i++) {
+        if (idarr[i] == 0) {
+            returnval = i;
+            idarr[i] = 1;
+            break;
+        }
+    }
+    if (returnval != -1) {
+        // found a free space, need to write back
+        flipper_format_delete_key(file, "EM4100");
+        if(!flipper_format_write_hex(file, "EM4100", idarr, sizeof(idarr))) {
+            returnval = -4;
+        }
+    }
+    done:
+    flipper_format_free(file);
+    return returnval;
+}
+
 
 // TODO there's an issue where if i put the write_hash code in the hash_read_callback function
 // furi_check fails. I think this is because it's doing a write while in a callback function?
 // anyways, i'm not sure how to do the stuff to ensure that the write function is called without
 // putting it in the callback function (i tried calling it after calling hash_read, but it was 
 // called before the read went through). i did a jank solution where when the screen gets rendered, 
-//if we're in the hash write state and the hash_correct bool is true (which it is if we're writing), 
+// if we're in the hash write state and the hash_correct bool is true (which it is if we're writing), 
 // it'll call hash_write then. 
 // CTRL F  'jank' for places this affects
 static void beep() {
@@ -90,6 +216,17 @@ static void rfid_write_hash_callback(LFRFIDWorkerWriteResult result, void* conte
 
     if(result == LFRFIDWorkerWriteOK) {
         app->state = RfidAppStateWriteHashSuccess;
+        int8_t result = rfid_file_write(app, &app->hash_data, false);
+        if (result < 1) {
+            app->state = RfidAppStateHashError;
+            if (result == 0) {
+                furi_string_set(app->status_text, "Card writeback unsuccessful");
+            } else {
+                furi_string_set(app->status_text, "Card write: Didn't exist");
+            }
+            error_beep();
+            return;
+        }
         beep();
     } else {
         app->state = RfidAppStateHashError;
@@ -101,16 +238,15 @@ static void rfid_write_hash_callback(LFRFIDWorkerWriteResult result, void* conte
 }
 
 
-
 static void rfid_write_hash(RfidApp* app) {
-    if (app->card_idx < 99) {
-        app->card_idx++;
+    if (app->hash_data.curr_idx < 99) {
+        app->hash_data.curr_idx++;
     } else {
         //TODO add regeneration
     }
     uint8_t new_data[5];
-    new_data[0] = app->card_id;
-    memcpy(&new_data[1], &app->hash_bytes[app->card_idx], 4);
+    new_data[0] = app->hash_data.card_id;
+    memcpy(&new_data[1], &app->hash_data.hash_bytes[app->hash_data.curr_idx], 4);
 
     protocol_dict_set_data(app->protocols, LFRFIDProtocolEM4100, new_data, 5);
     lfrfid_worker_write_start(app->worker, LFRFIDProtocolEM4100, rfid_write_hash_callback, app);
@@ -197,8 +333,10 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         }
         break;
     case RfidAppStateCreateError:
-        canvas_draw_str(canvas, 2, 24, "Card Write Error");
-        canvas_draw_str(canvas, 2, 34, "Press OK to try again");
+        canvas_draw_str(canvas, 2, 24, "Card Creation Error");
+        canvas_draw_str(canvas, 2, 34, furi_string_get_cstr(app->status_text));
+
+        canvas_draw_str(canvas, 2, 44, "Press OK to try again");
         break;
     case RfidAppStateCreateSuccess:
         canvas_draw_str(canvas, 2, 24, "Card Write Success!");
@@ -206,11 +344,12 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateReadingHash:
         canvas_draw_str(canvas, 2, 24, "Hold card on reader.");
-        char hash_str[9];
+        //char hash_str[9];
         // TODO currently prints backwards
-        snprintf(hash_str, 9, "%08X", (int) app->hash_bytes[app->card_idx]);
-        canvas_draw_str(canvas, 2, 44, "Expected hash value: ");
-        canvas_draw_str(canvas, 2, 54, hash_str);
+        // TODO if have multiple cards, can't display one expected value
+        //snprintf(hash_str, 9, "%08X", (int) app->hash_bytes[app->card_idx]);
+        //canvas_draw_str(canvas, 2, 44, "Expected hash value: ");
+        //canvas_draw_str(canvas, 2, 54, hash_str);
         break;
     case RfidAppStateWriteHash:
         canvas_draw_str(canvas, 2, 24, "Keep card on reader.");
@@ -231,14 +370,13 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         canvas_draw_str(canvas, 2, 44, "Press OK to read again.");
         canvas_draw_str(canvas, 2, 54, "Press back to return to menu.");
 
+        break;
+
+    case RfidAppStateDebugMsg:
+        canvas_draw_str(canvas, 2, 34, furi_string_get_cstr(app->status_text));
 
 
         break;
-    /*TODO add displays for  
-    RfidAppStateReadingHash,
-    RfidAppStateWriteHash,
-    RfidAppStateHashReadError,
-    */
     }
 }
 
@@ -299,8 +437,12 @@ static void rfid_create_tag_callback(LFRFIDWorkerWriteResult result, void* conte
     RfidApp* app = context;
     if(result == LFRFIDWorkerWriteOK) {
         app->state = RfidAppStateCreateSuccess;
+        rfid_file_write(app, &app->hash_data, true);
+
         beep();
     } else {
+        furi_string_set(app->status_text, "Write error");
+
         app->state = RfidAppStateCreateError;
         error_beep();
     }
@@ -401,23 +543,37 @@ static void rfid_emulate_tag(RfidApp* app) {
 
 static void rfid_create_hash_tag(RfidApp* app) {
     // fill hash array with keys, with first generated key at end 
-    uint32_t val = 12345;
+    uint8_t buff[16];
+    DateTime datetime;
+    furi_hal_rtc_get_datetime(&datetime);
+    memcpy(buff, &datetime, sizeof(DateTime));
     for (int i = 99; i >= 0; i--) {
-        char outp[16];
+        // hash function gives 128 bits of data
+        // char outp[16];
         sph_ripemd128_context* ctx = malloc(sizeof(sph_ripemd128_context));
         sph_ripemd128_init(ctx); 	
-        sph_ripemd128(ctx, &val, 4);
-        sph_ripemd128_close(ctx, outp);
+        sph_ripemd128(ctx, buff, sizeof(DateTime));
+        sph_ripemd128_close(ctx, buff);
         free(ctx);
-
-        memcpy(&app->hash_bytes[i], outp, 4);
-        val = app->hash_bytes[i];
+        memcpy(&app->hash_data.hash_bytes[i], buff, 4);
     }
-    app->card_idx = 0;
-    app->card_id = 123;
+    app->hash_data.curr_idx = 0;
+    int returnval = rfid_alloc_id(app);
+    if (returnval < 0) {
+        furi_string_printf(app->status_text, "ID alloc error %d", returnval);
+        app->state = RfidAppStateCreateError;
+        return;
+    }
+    app->hash_data.card_id = (uint8_t) returnval;
+    
     uint8_t card_data[5];
-    card_data[0] = app->card_id;
-    memcpy(&card_data[1], &app->hash_bytes[app->card_idx], 4);
+    card_data[0] = app->hash_data.card_id;
+    #ifdef DEBUG
+    app->state = RfidAppStateDebugMsg;
+    furi_string_printf(app->status_text, "New Card %d", app->hash_data.card_id);
+    furi_delay_ms(5000);
+    #endif
+    memcpy(&card_data[1], &app->hash_data.hash_bytes[app->hash_data.curr_idx], 4);
     furi_string_set(app->status_text, "Place card to write");
 
  // Set the modified data in the protocol dictionary
@@ -469,9 +625,22 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
         // Get the protocol data
         size_t data_size = protocol_dict_get_data_size(app->protocols, protocol);
         protocol_dict_get_data(app->protocols, protocol, app->tag_data, data_size);
+    
+        int8_t read_result = rfid_file_read(app, &app->hash_data, app->tag_data[0]);
+        if (read_result != 1){
+            if (read_result == -1) {
+                furi_string_set(app->status_text, "Card does not exist");
+                app->state = RfidAppStateHashError;
+                return;
+            } else {
+                furi_string_set(app->status_text, "File read error");
+                app->state = RfidAppStateHashError;
+                return;
+            }
+        }
 
         // validate that read value matches what's expected
-        if (memcmp(&app->hash_bytes[app->card_idx], &app->tag_data[1], 4) == 0) {
+        if (memcmp(&app->hash_data.hash_bytes[app->hash_data.curr_idx], &app->tag_data[1], 4) == 0) {
             // card hash matches what's expected
             app->hash_correct = true;
             // now to write the new value to the card
@@ -503,9 +672,6 @@ static void rfid_read_hash_tag(RfidApp* app) {
     lfrfid_worker_read_start(app->worker, LFRFIDWorkerReadTypeAuto, rfid_read_hash_callback, app);
     
 }
-
-
-
 
 
 static void handle_menu_input(RfidApp* app, InputEvent* event) {
@@ -714,6 +880,17 @@ static void byte_input_view_port_input_callback(InputEvent* event, void* context
     }
 }
 
+void rfid_make_folder(RfidApp* app) {
+    app->storage = furi_record_open("storage");
+    if (!storage_simply_mkdir(app->storage, "/ext/rfid_hashes")) {
+        furi_string_set(app->status_text, "folder create error");
+        app->state = RfidAppStateHashError;
+    }
+    rfid_create_idarr(app);
+
+
+}
+
 int32_t rfid_app_main(void* p) {
     UNUSED(p);
 
@@ -722,7 +899,7 @@ int32_t rfid_app_main(void* p) {
     app->tag_found = false;
     app->status_text = furi_string_alloc();
     app->byte_input_view_port = NULL;
-
+    rfid_make_folder(app);
     // Initialize protocols and worker
     app->protocols = protocol_dict_alloc(lfrfid_protocols, LFRFIDProtocolMax);
     app->worker = lfrfid_worker_alloc(app->protocols);
