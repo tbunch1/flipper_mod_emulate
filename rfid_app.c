@@ -347,18 +347,21 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateReadingHash:
         canvas_draw_str(canvas, 2, 24, "Hold card on reader.");
-        char expecting_str[40+8];
+        // NOTE removed since we don't know the card's value ahead of time. 
+        //char expecting_str[40+8];
         // app->hash_bytes is an unsigned int,
-        snprintf(expecting_str, sizeof(expecting_str), "Expecting %02lX", app->hash_data.hash_bytes[app->hash_data.curr_idx]);
-        canvas_draw_str(canvas, 2, 36, expecting_str);
+        //snprintf(expecting_str, sizeof(expecting_str), "Expecting %02lX", app->hash_data.hash_bytes[app->hash_data.curr_idx]);
+        //canvas_draw_str(canvas, 2, 36, expecting_str);
         break;
     case RfidAppStateReadingHashSuccess:
         char hash_str[40+8];
         snprintf(hash_str, sizeof(hash_str), "Found card with hash:");
         canvas_draw_str(canvas, 2, 24, hash_str);
+        snprintf(hash_str, sizeof(hash_str), "Had %02lX", *((uint32_t*) &app->tag_data[1]));
+        canvas_draw_str(canvas, 2, 34, hash_str);
         snprintf(hash_str, sizeof(hash_str), "Expected %02lX", app->hash_data.hash_bytes[app->hash_data.curr_idx]);
-        canvas_draw_str(canvas, 2, 36, hash_str);
-        canvas_draw_str(canvas, 2, 34, "Will try writing to card if matched");
+        canvas_draw_str(canvas, 2, 44, hash_str);
+        // canvas_draw_str(canvas, 2, 54, "Writing to card soon");
         break;
     case RfidAppStateWriteHash:
         canvas_draw_str(canvas, 2, 24, "Keep card on reader.");
@@ -376,8 +379,8 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         break;
     case RfidAppStateWriteHashSuccess:
         canvas_draw_str(canvas, 2, 24, "Card written successfully.");
-        canvas_draw_str(canvas, 2, 44, "Press OK to read again.");
-        canvas_draw_str(canvas, 2, 54, "Press back to return to menu.");
+        
+        canvas_draw_str(canvas, 2, 54, "OK: Read again. Back: menu");
 
         break;
 
@@ -578,14 +581,13 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
 
     if(result == LFRFIDWorkerReadDone) {
         // Get the protocol data
-        app->state = RfidAppStateReadingHashSuccess;
-        // wait 1 s to show data -- TODO: Switch to input key to let person abort?
-        furi_delay_ms(1000);
+
 
         size_t data_size = protocol_dict_get_data_size(app->protocols, protocol);
         protocol_dict_get_data(app->protocols, protocol, app->tag_data, data_size);
     
         int8_t read_result = rfid_file_read(app, &app->hash_data, app->tag_data[0]);
+
         if (read_result != 1){
             if (read_result == -1) {
                 furi_string_set(app->status_text, "Card does not exist");
@@ -597,9 +599,14 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
                 return;
             }
         }
+        app->state = RfidAppStateReadingHashSuccess;
+        // wait 1 s to show data -- TODO: Switch to input key to let person abort?
+        // NOTE moved here for now so that file data will have been read in
+        furi_delay_ms(5000);
 
         // validate that read value matches what's expected
         if (memcmp(&app->hash_data.hash_bytes[app->hash_data.curr_idx], &app->tag_data[1], 4) == 0) {
+
             // card hash matches what's expected
             app->hash_correct = true;
             // now to write the new value to the card
