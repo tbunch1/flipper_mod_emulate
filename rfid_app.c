@@ -362,12 +362,20 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
         }
         break;
     case RfidAppStateReadingHashSuccess:
-        snprintf(hash_str, sizeof(hash_str), "Found card %d", app->hash_data->card_id);
-        canvas_draw_str(canvas, 2, 24, hash_str);
-        snprintf(hash_str, sizeof(hash_str), "Hash: %02lX", *((uint32_t*) &app->tag_data[1]));
-        canvas_draw_str(canvas, 2, 34, hash_str);
-        snprintf(hash_str, sizeof(hash_str), "Expected: %02lX", app->hash_data->hash_bytes[app->hash_data->curr_idx]);
-        canvas_draw_str(canvas, 2, 44, hash_str);
+        canvas_draw_str(canvas, 2, 24, "Read:");
+        char hash_str[40+8];
+        snprintf(hash_str, sizeof(hash_str), "%02X", app->tag_data[1]);
+        canvas_draw_str(canvas, 4, 34, hash_str);
+        snprintf(hash_str, sizeof(hash_str), "%02lX", app->hash_bytes[app->card_idx]);
+        canvas_draw_str(canvas, 2, 44, "Expected:");
+        canvas_draw_str(canvas, 4, 54, hash_str);
+
+        if (app->tag_data[1] == app->hash_bytes[app->card_idx]) {
+            canvas_draw_str(canvas, 2, 64, "Matched, will write to card");
+        } else {
+            canvas_draw_str(canvas, 2, 64, "Not matched, will not write");
+        }
+
         break;
     case RfidAppStateWriteHash:
         canvas_draw_str(canvas, 2, 24, "Keep card on reader.");
