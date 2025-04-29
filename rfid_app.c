@@ -170,7 +170,6 @@ int16_t rfid_alloc_id(RfidApp* app) {
         returnval = -3;
         goto done;
     }
-    // 0 is reserved
     for (int i = 0; i < 256; i++) {
         if (idarr[i] == 0) {
             returnval = i;
@@ -185,6 +184,38 @@ int16_t rfid_alloc_id(RfidApp* app) {
             returnval = -4;
         }
     }
+    done:
+    flipper_format_free(file);
+    return returnval;
+}
+
+// frees an id number to be used again
+// returns -1 on error, and an id between 0 and 255 on success
+int16_t rfid_dealloc_id(RfidApp* app, uint8_t idnum) {
+    FlipperFormat* file = flipper_format_file_alloc(app->storage);
+    int8_t returnval = -1;
+    uint8_t idarr[256];
+
+    if(!flipper_format_file_open_existing(file, "/ext/rfid_hashes/idarr.hashrf")) {
+        returnval = -2;
+        goto done;
+    }
+
+    if(!flipper_format_read_hex(file, "EM4100", idarr, sizeof(idarr))) {
+        returnval = -3;
+        goto done;
+    }
+
+    idarr[idnum] = 0;
+
+    // need to write back
+    flipper_format_delete_key(file, "EM4100");
+    if(!flipper_format_write_hex(file, "EM4100", idarr, sizeof(idarr))) {
+        returnval = -4;
+        goto done;
+    }
+    returnval = 1;
+
     done:
     flipper_format_free(file);
     return returnval;
@@ -456,7 +487,7 @@ static void rfid_create_tag_callback(LFRFIDWorkerWriteResult result, void* conte
         beep();
     } else {
         furi_string_set(app->status_text, "Write error");
-
+        rfid_dealloc_id(app, app->hash_data->card_id);
         app->state = RfidAppStateCreateError;
         error_beep();
     }
