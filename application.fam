@@ -1,6 +1,6 @@
 App(
     appid="rfid_app",
-    name="RFID Tool",
+    name="HashTag",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="rfid_app_main",
     requires=[

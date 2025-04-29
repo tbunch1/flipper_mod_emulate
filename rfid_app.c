@@ -270,7 +270,7 @@ static void app_draw_callback(Canvas* canvas, void* ctx) {
     // Don't show the title when in menu state (save vspace)
     if(app->state != RfidAppStateMenu) {
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 12, "RFID Tool");
+        canvas_draw_str(canvas, 2, 12, "# HashTag #");
     }
     char hash_str[40+8];
 
@@ -438,10 +438,10 @@ static void rfid_read_callback(LFRFIDWorkerReadResult result, ProtocolId protoco
 static void rfid_write_callback(LFRFIDWorkerWriteResult result, void* context) {
     RfidApp* app = context;
     if(result == LFRFIDWorkerWriteOK) {
-        app->state = RfidAppStateIdle;
+        app->state = RfidAppStateMenu;
         beep();
     } else {
-        app->state = RfidAppStateIdle;
+        app->state = RfidAppStateMenu;
         error_beep();
         // TODO: retry/error handling
     }
@@ -495,10 +495,10 @@ static void rfid_write_tag(RfidApp* app) {
     }
 
     // Set the modified data in the protocol dictionary
-    protocol_dict_set_data(app->protocols, LFRFIDProtocolHidGeneric, modified_data, 8);
+    protocol_dict_set_data(app->protocols, LFRFIDProtocolEM4100, modified_data, 5);
 
     // Start writing
-    lfrfid_worker_write_start(app->worker, LFRFIDProtocolHidGeneric, rfid_write_callback, app);
+    lfrfid_worker_write_start(app->worker, LFRFIDProtocolEM4100, rfid_write_callback, app);
 }
 
 static void rfid_emulate_tag(RfidApp* app) {
@@ -628,7 +628,7 @@ static void rfid_read_hash_callback(LFRFIDWorkerReadResult result, ProtocolId pr
 
         // wait 1 s to show data -- TODO: Switch to input key to let person abort?
         // NOTE moved here for now so that file data will have been read in
-        furi_delay_ms(5000);
+        furi_delay_ms(3000);
 
         // validate that read value matches what's expected
         if (memcmp(&app->hash_data->hash_bytes[app->hash_data->curr_idx], &app->tag_data[1], 4) == 0) {
